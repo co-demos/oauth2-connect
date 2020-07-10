@@ -1,0 +1,34 @@
+{
+  "name": "@julpy/oauth2-connect",
+  "version": "0.0.1-beta.1",
+  "author": "julpy",
+  "description": "Login with Oauth2 from a vue app (or not)... without any dependencies",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/co-demos/oauth2-connect.git"
+  },
+  "main": "index.js",
+  "keywords": [
+    "json",
+    "npm",
+    "package",
+    "oauth",
+    "vue",
+    "plugin",
+    "openAPI"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "standard": "^14.3.4"
+  },
+  "bugs": {
+    "url": "https://github.com/co-demos/oauth2-connect/issues"
+  },
+  "homepage": "https://github.com/co-demos/oauth2-connect#readme",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "npx standard",
+    "lint-fix": "npx standard --fix"
+  }
+}
