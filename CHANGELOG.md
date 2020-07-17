@@ -9,11 +9,11 @@ Simple way to oauth in Vue
 
 ## Current (in progress)
 
-- beta version : `0.0.1-beta.1`
+- beta version : `0.0.1-beta.2`
 
 ## beta version
 
-- < **0.0.1-beta.1** : ...
+- **< 0.0.1-beta.2** : starting point
 
 <!-- ### Breaking changes -->
 

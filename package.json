@@ -1,6 +1,6 @@
 {
   "name": "@julpy/oauth2-connect",
-  "version": "0.0.1-beta.1",
+  "version": "0.0.1-beta.2",
   "author": "julpy",
   "description": "Login with Oauth2 from a vue app (or not)... without any dependencies",
   "license": "MIT",

@@ -1,5 +1,7 @@
 // npm package : oauth2-connect
 
+import { create } from 'pkce'
+
 const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
 const charactersPunctuation = '-._~'
 const flowsMinMax = {
@@ -50,26 +52,29 @@ function generateRandomString (stringLength, specs) {
   return randomStringAsArray.join('')
 }
 
-function sha256 (plain) {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(plain)
-  return window.crypto.subtle.digest('SHA-256', data)
-}
+// function sha256 (plain) {
+//   const encoder = new TextEncoder()
+//   const data = encoder.encode(plain)
+//   return window.crypto.subtle.digest('SHA-256', data)
+// }
 
-function base64urlencode (str) {
-  return btoa(String.fromCharCode.apply(null, new Uint8Array(str)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
+// function base64urlencode (str) {
+//   return btoa(String.fromCharCode.apply(null, new Uint8Array(str)))
+//     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+// }
 
-async function pkceChallengeFromVerifier (v) {
-  const hashed = await sha256(v)
-  return base64urlencode(hashed)
-}
+// async function pkceChallengeFromVerifier (v) {
+//   const hashed = await sha256(v)
+//   return base64urlencode(hashed)
+// }
 
 /**
  * MAIN OAUTH CLASS
  */
 class OAuthLib {
+  /**************************************************************
+   * Initialization
+   */
   constructor (options, store) {
     this.store = store
     this.storeModuleName = options.storeModuleName
@@ -87,8 +92,11 @@ class OAuthLib {
     this.tokenPath = options.tokenPath ? options.tokenPath : '/token'
     this.revokePath = options.revokePath ? options.revokePath : '/revoke'
     this.redirect = options.oauthRedirect ? options.oauthRedirect : '/login'
-    this.redirectURI = encodeURIComponent(`${this._getBaseUrl()}${this.redirect}`)
+
     this.redirectHomeURI = encodeURIComponent(`${this._getBaseUrl()}`)
+    this.redirectURL = `${this._getBaseUrl()}${this.redirect}`
+    this.redirectURI = encodeURIComponent(`${this.redirectURL}`)
+
     this.store.commit(`${this.storeModuleName}/setOauthRedirect`, this.redirect)
     this.store.commit(`${this.storeModuleName}/setOauthRedirectURI`, this.redirectURI)
 
@@ -97,12 +105,20 @@ class OAuthLib {
     this.oauthScope = options.oauthScope ? options.oauthScope : 'default'
 
     // set OAUTH localStorage object names : state | code_verifier | access_token | refresh_token
-    this.stateName = options.stateName ? options.stateName : 'state'
-    this.codeVerifierName = options.codeVerifierName ? options.codeVerifierName : 'code_verifier'
-    this.oauthAccessTokenName = options.oauthAccessTokenName ? options.oauthAccessTokenName : 'accessToken'
+    this.prefix = options.localStoragePrefix ? options.localStoragePrefix : ''
+
+    this.stateName = `${this.prefix}State`
+    this.codeVerifierName = `${this.prefix}CodeVerifier`
+
+    this.oauthAccessTokenName = `${this.prefix}AccessToken`
+    this.oauthRefreshTokenName = `${this.prefix}RefreshToken`
+    this.oauthExpiresName = `${this.prefix}AccessTokenExpires`
+    this.oauthTokenTypeName = `${this.prefix}TokenType`
+
     this.store.commit(`${this.storeModuleName}/setTokenName`, { type: 'access', name: this.oauthAccessTokenName })
-    this.oauthRefreshTokenName = options.oauthRefreshTokenName ? options.oauthRefreshTokenName : 'refreshToken'
     this.store.commit(`${this.storeModuleName}/setTokenName`, { type: 'refresh', name: this.oauthRefreshTokenName })
+    this.store.commit(`${this.storeModuleName}/setTokenName`, { type: 'expires', name: this.oauthExpiresName })
+    this.store.commit(`${this.storeModuleName}/setTokenName`, { type: 'type', name: this.oauthTokenTypeName })
 
     // set flowSpecs
     this.flowSpecs = flowsMinMax[this.oauthFlow]
@@ -111,6 +127,9 @@ class OAuthLib {
     console.log('>>> OAuthLib > init >  this :', this)
   }
 
+  /**************************************************************
+   * Basic utils
+   */
   _getBaseUrl () {
     const port = window.location.port
     return window.location.protocol + '//' + window.location.hostname + (port ? ':' + port : '')
@@ -131,41 +150,35 @@ class OAuthLib {
     return localStorage[this.codeVerifierName]
   }
 
+  async clearLocalStorageFromLoginParams () {
+    // reset localStorage from state and code verifier only used in login workflow
+    delete localStorage[this.stateName]
+    delete localStorage[this.codeVerifierName]
+  }
+
+  async clearLocalStorageFromTokens () {
+    // reset localStorage from tokens
+    delete localStorage[this.oauthAccessTokenName]
+    delete localStorage[this.oauthRefreshTokenName]
+    delete localStorage[this.oauthExpiresName]
+    delete localStorage[this.oauthTokenTypeName]
+  }
+
+  /**************************************************************
+   * Authentication-related
+   */
   // >>> TODO: handle expiration
   isAuthenticated () {
     return !!localStorage[this.oauthAccessTokenName]
   }
 
-  /**
+  /**************************************************************
    * WORKFLOWS OBJECTS
   */
-  async buildAuthWorkflowObject (clientId, state, code) {
-    // console.log('>>> OAuthLib > buildAuthWorkflowObject >  clientId :', clientId)
-    const wf = {
-      flow: this.oauthFlow,
-      oauthExchangeUrl: '',
-      oauthExchangeData: {}
-    }
 
-    // declare some vars
-    const codeVerifier = this.getCodeVerifierFromLocalStorage()
-
-    // set exchange callbacks common vars
-    wf.oauthExchangeUrl = `${this.oauthServer}${this.tokenPath}`
-    wf.oauthExchangeData = {
-      grant_type: 'authorization_code',
-      client_id: `${this.clientId}`,
-      client_secret: `${this.clientSecret}`,
-      redirect_uri: `${this.redirectHomeURI}`,
-      code: `${code}`,
-      code_verifier: `${codeVerifier}`
-    }
-
-    // return workflow data
-    const partialWorkflow = (({ oauthExchangeUrl, oauthExchangeData }) => ({ oauthExchangeUrl, oauthExchangeData }))(wf)
-    return partialWorkflow
-  }
-
+  /**************************************************************
+   * Create a login workflow
+   */
   async buildLoginWorkflowObject (clientId, state) {
     // console.log('>>> OAuthLib > buildLoginWorkflowObject >  clientId :', clientId)
     // console.log('>>> OAuthLib > buildLoginWorkflowObject >  redirectURI :', redirectURI)
@@ -184,22 +197,19 @@ class OAuthLib {
     }
 
     // declare some vars
-    let codeVerifLength, codeVerifier, codeChallenge
+    let codeVerifier, codeChallenge
 
     switch (this.oauthFlow) {
-      // case 'implicit':
-      //   break
-      // case 'authCode':
-      //   break
       case 'pkce':
         wf.stringsLogin.respTypeString = 'response_type=code'
+
         // generate code verifier and code challenge
         wf.stringsLogin.codeChallengeMethod = 'code_challenge_method=S256'
-        codeVerifLength = randomInt(this.flowSpecs.code.min, this.flowSpecs.code.max)
-        codeVerifier = generateRandomString(codeVerifLength, this.flowSpecs.code)
+        var pkcePair = create()
+        codeVerifier = pkcePair.codeVerifier
+        codeChallenge = pkcePair.codeChallenge
         localStorage[this.codeVerifierName] = codeVerifier
-        codeChallenge = await pkceChallengeFromVerifier(codeVerifier)
-        wf.stringsLogin.codeChallenge = `code_challenge=${codeChallenge}`
+        wf.stringsLogin.codeChallenge = `code_challenge=${encodeURIComponent(codeChallenge)}`
         break
     }
 
@@ -219,6 +229,7 @@ class OAuthLib {
     console.log('>>> OAuthLib > login >  this.clientId :', this.clientId)
 
     // create a new state to send in request and store for later checks
+    // await this.clearLocalStorage()
     const state = this.createNewState()
 
     // build the workflow data object
@@ -226,13 +237,42 @@ class OAuthLib {
     console.log('>>> OAuthLib > login >  workflowData :', workflowData)
     console.log('>>> OAuthLib > login >  workflowData.loginUrlStrings :', workflowData.loginUrlString)
 
-    // open url in browser
+    // open authorization url in browser
     window.location = workflowData.loginUrlString
   }
 
-  /**
+  /**************************************************************
    * Handle the response from the login workflow
    */
+  async buildAuthWorkflowObject (clientId, state, code) {
+    // console.log('>>> OAuthLib > buildAuthWorkflowObject >  clientId :', clientId)
+    const wf = {
+      flow: this.oauthFlow,
+      oauthExchangeUrl: '',
+      oauthExchangeData: {}
+    }
+
+    // declare some vars
+    const codeVerifier = this.getCodeVerifierFromLocalStorage()
+
+    // set exchange callbacks common vars
+    wf.oauthExchangeUrl = `${this.oauthServer}${this.tokenPath}`
+    const payload = {
+      grant_type: 'authorization_code',
+      client_id: `${this.clientId}`,
+      client_secret: `${this.clientSecret}`,
+      code: `${code}`,
+      code_verifier: `${codeVerifier}`,
+      redirect_uri: `${this.redirectURL}`
+    }
+    // wf.oauthExchangeData = JSON.stringify(payload)
+    wf.oauthExchangeData = payload
+
+    // return workflow data
+    const partialWorkflow = (({ oauthExchangeUrl, oauthExchangeData }) => ({ oauthExchangeUrl, oauthExchangeData }))(wf)
+    return partialWorkflow
+  }
+
   async retrieveToken () {
     const state = this.getStateFromLocalStorage()
     console.log('>>> OAuthLib > retrieveToken >  state :', state)
@@ -265,18 +305,24 @@ class OAuthLib {
     // extract code from response
     if (this.flowSpecs.needExchange) {
       // for : pkce | authorisation_code
-      const headerStr = btoa(`${this.clientId}:${this.clientSecret}`)
+      console.log('>>> OAuthLib > retrieveToken > needExchange == true ...')
       const config = {
         method: 'POST',
-        headers: { Authorization: `Basic ${headerStr}` },
-        // headers: { ...basicHeaders, Authorization: `Basic ${headerStr}` },
+        headers: basicHeaders,
         body: JSON.stringify(exchangeData)
       }
+      console.log('>>> OAuthLib > retrieveToken > config :', config)
+
       const response = await fetch(exchangeUrl, config)
-      accessToken = response.body.access_token
-      refreshToken = response.body.refreshToken
-      expiresIn = response.body.expires_in
-      tokenType = response.body.token_type
+      const data = await response.json()
+      console.log('>>> OAuthLib > retrieveToken > data :', data)
+
+      accessToken = data.access_token
+      refreshToken = data.refresh_token
+      expiresIn = data.expires_in
+      tokenType = data.token_type
+
+      this.clearLocalStorageFromLoginParams()
     } else {
       // for : implicit
       accessToken = queryObject.access_token
@@ -288,14 +334,18 @@ class OAuthLib {
     // set localStorage
     localStorage[this.oauthAccessTokenName] = accessToken
     localStorage[this.oauthRefreshTokenName] = refreshToken
-    localStorage[`${this.oauthAccessTokenName}Expires`] = expiresIn
-    localStorage[`${this.oauthAccessTokenName}tokenType`] = tokenType
+    localStorage[this.oauthExpiresName] = expiresIn
+    localStorage[this.oauthTokenTypeName] = tokenType
+
+    // set oauth vue store values
+    this.store.commit(`${this.storeModuleName}/setToken`, { type: 'type', token: tokenType })
+    this.store.commit(`${this.storeModuleName}/setToken`, { type: 'expires', token: expiresIn })
     this.store.commit(`${this.storeModuleName}/setToken`, { type: 'access', token: accessToken })
     this.store.commit(`${this.storeModuleName}/setToken`, { type: 'refresh', token: refreshToken })
   }
 
-  /**
-   * Run the logout
+  /**************************************************************
+   * Logout related
    */
   async logout () {
     const revokeUrl = `${this.oauthServer}${this.revokePath}`
@@ -311,16 +361,13 @@ class OAuthLib {
     } catch (error) {
       console.log('error', error)
     } finally {
-      delete localStorage[this.stateName]
-      delete localStorage[this.codeVerifierName]
-      delete localStorage[this.oauthAccessTokenName]
-      delete localStorage[`${this.oauthAccessTokenName}Expires`]
-      delete localStorage[`${this.oauthAccessTokenName}tokenType`]
+      await this.clearLocalStorageFromLoginParams()
+      await this.clearLocalStorageFromTokens()
     }
   }
 }
 
-/**
+/**************************************************************
  * VUE STORE
  */
 // vue store module within plugin just for auth
@@ -336,6 +383,8 @@ export const moduleAuth = {
     oauthRedirect: undefined,
 
     tokens: {
+      type: { name: '', value: undefined },
+      expires: { name: '', value: undefined },
       access: { name: '', value: undefined },
       refresh: { name: '', value: undefined }
     }
@@ -376,14 +425,19 @@ export const moduleAuth = {
       state.tokens[type].value = token
     },
     resetToken (state) {
-      state.tokens = {}
+      state.tokens = {
+        type: { name: '', value: undefined },
+        expires: { name: '', value: undefined },
+        access: { name: '', value: undefined },
+        refresh: { name: '', value: undefined }
+      }
     }
   },
   actions: {},
   modules: {}
 }
 
-/**
+/**************************************************************
  * OAUTH CLIENT - PLUGIN FOR VUE
  */
 // wrap up client
